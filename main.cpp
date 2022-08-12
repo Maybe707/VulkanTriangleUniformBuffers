@@ -1,10 +1,4 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
-#define GLM_FORCE_RADIANS
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-
+#include <glm/fwd.hpp>
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -13,11 +7,21 @@
 #include <vector>
 #include <cstring>
 #include <cstdlib>
-#include <cstdint>
-#include <limits>
 #include <array>
 #include <optional>
 #include <set>
+
+#define GLM_FORCE_RADIANS
+#include <vulkan/vulkan.h>
+#include <X11/Xlib.h>
+#include "vulkan/vulkan_xlib.h"
+#include "vulkan/vulkan_core.h"
+#include "WindowX.hpp"
+#include "VertexMath.hpp"
+#include "glm/glm.hpp"
+#include "glm/gtc/matrix_transform.hpp"
+
+#define VK_USE_PLATFORM_XLIB_KHR
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -126,10 +130,11 @@ public:
     }
 
 private:
-    GLFWwindow* window;
+    GLVM::Core::CWindowX Window;
 
     VkInstance instance;
     VkDebugUtilsMessengerEXT debugMessenger;
+    VkXlibSurfaceCreateInfoKHR createXlibSurfaceInfo;
     VkSurfaceKHR surface;
 
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -170,19 +175,19 @@ private:
     bool framebufferResized = false;
 
     void initWindow() {
-        glfwInit();
+        createXlibSurfaceInfo.dpy = Window.GetDisplay();
+        createXlibSurfaceInfo.window = Window.GetWindow();
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
-        glfwSetWindowUserPointer(window, this);
-        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+        createXlibSurfaceInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+        createXlibSurfaceInfo.pNext = nullptr;
+        createXlibSurfaceInfo.flags = 0;
+        ///< glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     }
 
-    static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
-        auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
-        app->framebufferResized = true;
-    }
+    // static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+    //     auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+    //     app->framebufferResized = true;
+    // }
 
     void initVulkan() {
         createInstance();
@@ -205,9 +210,18 @@ private:
     }
 
     void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
+        bool flag = false;
+        int var = 0;
+        while (1) {
+            ///< Render method.
+            if(flag)
+                std::cin >> var;
+
+            if(var == 2)
+                break;
+
             drawFrame();
+            flag = true;
         }
 
         vkDeviceWaitIdle(device);
@@ -261,19 +275,16 @@ private:
 
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
-
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
+        Window.Close();
     }
 
     void recreateSwapChain() {
         int width = 0, height = 0;
-        glfwGetFramebufferSize(window, &width, &height);
-        while (width == 0 || height == 0) {
-            glfwGetFramebufferSize(window, &width, &height);
-            glfwWaitEvents();
-        }
+        // glfwGetFramebufferSize(window, &width, &height);
+        // while (width == 0 || height == 0) {
+        //     glfwGetFramebufferSize(window, &width, &height);
+        //     glfwWaitEvents();
+        // }
 
         vkDeviceWaitIdle(device);
 
@@ -301,7 +312,7 @@ private:
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
-        auto extensions = getRequiredExtensions();
+        std::vector<const char*> extensions = getRequiredExtensions();
         createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         createInfo.ppEnabledExtensionNames = extensions.data();
 
@@ -343,7 +354,7 @@ private:
     }
 
     void createSurface() {
-        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+        if (vkCreateXlibSurfaceKHR(instance, &createXlibSurfaceInfo, nullptr, &surface) != VK_SUCCESS) {
             throw std::runtime_error("failed to create window surface!");
         }
     }
@@ -880,7 +891,7 @@ private:
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
             vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
+            
             vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
@@ -1032,7 +1043,7 @@ private:
             return capabilities.currentExtent;
         } else {
             int width, height;
-            glfwGetFramebufferSize(window, &width, &height);
+//            glfwGetFramebufferSize(window, &width, &height);
 
             VkExtent2D actualExtent = {
                 static_cast<uint32_t>(width),
@@ -1133,17 +1144,15 @@ private:
     }
 
     std::vector<const char*> getRequiredExtensions() {
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions;
-        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-        std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+        std::vector<const char*> pRequiredExtentions = {"VK_KHR_xlib_surface",
+            "VK_EXT_acquire_xlib_display", "VK_KHR_display", "VK_KHR_surface",
+            "VK_EXT_direct_mode_display"};
 
         if (enableValidationLayers) {
-            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            pRequiredExtentions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
-        return extensions;
+        return pRequiredExtentions;
     }
 
     bool checkValidationLayerSupport() {
